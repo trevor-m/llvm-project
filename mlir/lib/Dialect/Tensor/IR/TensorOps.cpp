@@ -153,6 +153,53 @@ static llvm::SmallBitVector getDroppedDims(ArrayRef<int64_t> reducedShape,
 }
 
 //===----------------------------------------------------------------------===//
+// BitcastOp
+//===----------------------------------------------------------------------===//
+
+bool BitcastOp::areCastCompatible(TypeRange inputs, TypeRange outputs) {
+  if (inputs.size() != 1 || outputs.size() != 1)
+    return false;
+  Type a = inputs.front(), b = outputs.front();
+  auto aT = a.dyn_cast<TensorType>();
+  auto bT = b.dyn_cast<TensorType>();
+  if (!aT || !bT)
+    return false;
+
+  if (aT.getElementTypeBitWidth() != bT.getElementTypeBitWidth())
+    return false;
+
+  return succeeded(verifyCompatibleShape(aT, bT));
+}
+
+namespace {
+
+/// Replaces chains of two tensor.bitcast operations by a single tensor.bitcast
+/// operation.
+struct ChainedTensorBitcast : public OpRewritePattern<BitcastOp> {
+  using OpRewritePattern<BitcastOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(BitcastOp tensorBitcast,
+                                PatternRewriter &rewriter) const final {
+    auto tensorBitcastOperand =
+        tensorBitcast.getOperand().getDefiningOp<BitcastOp>();
+    if (!tensorBitcastOperand)
+      return failure();
+
+    auto resultType = tensorBitcast.getType().cast<TensorType>();
+    rewriter.replaceOpWithNewOp<BitcastOp>(tensorBitcast, resultType,
+                                           tensorBitcastOperand.getOperand());
+    return success();
+  }
+};
+
+} // namespace
+
+void BitcastOp::getCanonicalizationPatterns(RewritePatternSet &results,
+                                            MLIRContext *context) {
+  results.add<ChainedTensorBitcast>(context);
+}
+
+//===----------------------------------------------------------------------===//
 // CastOp
 //===----------------------------------------------------------------------===//
 
